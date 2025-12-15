@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 if [[ "${1}" == 'r' ]]; then
   echo "Removing existing Docker Nginx image... "
-docker compose down --rmi all --volumes --remove-orphans
+docker-compose down --rmi all --volumes --remove-orphans
 
 else 
 echo "[CLEAN] Removing Kubernetes resources..."
