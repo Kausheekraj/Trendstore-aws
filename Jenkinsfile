@@ -24,15 +24,16 @@ pipeline {
                 sh "${SCRIPT_DIR}/compose.sh -b"
             }
         }
+
         stage('Push Image') {
-           steps {
+            steps {
                 withCredentials([string(credentialsId: 'dockerhub-pat', variable: 'DOCKERHUB_PAT')]) {
                     sh """
                         echo $DOCKERHUB_PAT | docker login -u kausheekraj --password-stdin
                         ${SCRIPT_DIR}/compose.sh -p
-                      """
-                     
-           }
+                    """
+                }
+            }
         }
 
         stage('Deploy Container') {
@@ -53,12 +54,11 @@ pipeline {
 
     post {
         success {
-            echo ' Deployment Successful'
+            echo 'Deployment Successful'
         }
         failure {
-            echo ' Pipeline Failed — Check Logs'
+            echo 'Pipeline Failed — Check Logs'
         }
     }
 }
-
 
