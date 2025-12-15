@@ -24,6 +24,11 @@ pipeline {
                 sh "${SCRIPT_DIR}/compose.sh -b"
             }
         }
+        stage('Push Image') {
+           steps {
+               sh "${SCRIPT_DIR}/compose.sh -p"
+           }
+        }
 
         stage('Deploy Container') {
             steps {
