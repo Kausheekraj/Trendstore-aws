@@ -42,9 +42,7 @@ pipeline {
 
         stage('Health Check') {
             steps {
-                script {
-                    sleep 10
-                }
+                script {sleep 10}
                 sh """
                 kubectl get pods 
                 kubectl get deploy
