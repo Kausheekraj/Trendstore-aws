@@ -50,7 +50,6 @@ pipeline {
                 kubectl get deploy
                 kubectl get svc
                 kubectl get hpa
-                script { sleep 10 }
                 curl -I http://localhost:3000 || true
                 """
             }
