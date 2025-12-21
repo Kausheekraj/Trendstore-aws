@@ -14,7 +14,9 @@ pipeline {
 
         stage('Prepare Scripts') {
             steps {
+               script{
                 sh "chmod +x ${SCRIPT_DIR}/*.sh"
+                }
             }
         }
         stage('Build image') {
