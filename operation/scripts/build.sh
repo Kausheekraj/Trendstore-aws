@@ -8,7 +8,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     b|build) mode='build' ;;
     p|push)  mode='push' ;;
-    *) echo "Unknown option: $1" ; exit 1 ;;
   esac
   shift
 done
@@ -26,9 +25,5 @@ case "$mode" in
     docker tag "$base_image:latest" "$date_image"
     docker push "$date_image"
     docker push "$base_image:latest"
-    ;;
-  *)
-    echo "No valid mode selected"
-    exit 1
     ;;
 esac
