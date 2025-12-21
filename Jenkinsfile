@@ -1,8 +1,8 @@
 pipeline {
     agent any
-    DOCKER_CREDS = "docker_pat"
     environment {
         SCRIPT_DIR = "operation/scripts"
+        DOCKER_CREDS = "docker_pat"
     }
 
     stages {
