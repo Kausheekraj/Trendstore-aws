@@ -26,12 +26,15 @@ pipeline {
         }
        stage('Push Image') {
            steps {
-           docker.withRegistry('https://index.docker.io/v1/', DOCKER_CREDS) 
+               script{
+               docker.withRegistry('https://index.docker.io/v1/', DOCKER_CREDS) {
 
             sh """
                 ${SCRIPT_DIR}/compose.sh -p
                  minikube image load kausheekraj/trendstore-nginx:latest
             """
+                }
+              }
         }
     }
 
