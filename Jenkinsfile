@@ -38,7 +38,7 @@ pipeline {
     }
 }
   stage('Configure Kubeconfig for EKS') {
-            steps {
+            withAWS(credentials: 'aws-creds-id', region: 'us-east-2') {
                 sh """
                   aws eks update-kubeconfig --name trendstore-eks --region us-east-2
                 """
