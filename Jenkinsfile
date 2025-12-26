@@ -122,7 +122,7 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                      kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80 > ${WORKSPACE}/grafana_pf.log 2>&1 &
+                      kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80 > ${WORKSPACE}/grafana_pf.log 2>&1 &
                       GF_PID=$!
                       sleep 5
                       curl -s http://localhost:3000/login >/dev/null || true
