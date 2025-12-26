@@ -1,34 +1,6 @@
-terraform {
-  required_version = ">= 1.5.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-
-
-data "aws_ami" "amazon_linux_2" {
-  owners      = ["amazon"]
-  most_recent = true
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
-}
-
 # VPC
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+resource "aws_vpc" "eks_vpc" {
+  cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
 
@@ -36,77 +8,105 @@ resource "aws_vpc" "main" {
     Name = "trendstore-vpc"
   }
 }
-
-# Public subnet
-resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "${var.aws_region}a"
-
-  tags = {
-    Name = "trendstore-public-subnet"
-  }
-}
-
-# Internet gateway
+# Internet-gateway
 resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = aws_vpc.eks_vpc.id
 
   tags = {
     Name = "trendstore-igw"
   }
 }
+# subnet
+resource "aws_subnet" "public" {
+  count                   = length(var.public_subnets)
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = var.public_subnets[count.index]
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
 
-# Route table
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+  tags = {
+    Name                     = "trendstore-public-${count.index}"
+    "kubernetes.io/role/elb" = "1"
+  }
+}
+resource "aws_subnet" "private" {
+  count             = length(var.private_subnets)
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = var.private_subnets[count.index]
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+
+  tags = {
+    Name                              = "trendstore-private-${count.index}"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+}
+
+
+# route table
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
 
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.igw.id
   }
-
-  tags = {
-    Name = "trendstore-public-rt"
-  }
 }
 
 resource "aws_route_table_association" "public_assoc" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
+  count          = length(aws_subnet.public)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public_rt.id
+}
+# NAT
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  domain = "vpc"
+
+  tags = {
+    Name = "trendstore-nat-eip"
+  }
+
+  depends_on = [aws_internet_gateway.igw]
 }
 
-# Security group for Jenkins EC2
-resource "aws_security_group" "jenkins_sg" {
-  name        = "jenkins-sg"
-  description = "Allow SSH and Jenkins"
-  vpc_id      = aws_vpc.main.id
+# NAT Gateway in first public subnet
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id
 
-  # SSH
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  tags = {
+    Name = "trendstore-nat"
   }
 
-  # Jenkins UI
-  ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  depends_on = [aws_internet_gateway.igw]
+}
+
+# Private route table with default route via NAT
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
   }
 
-  # Optional: NodePort / app debug port
-  ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  tags = {
+    Name = "trendstore-private-rt"
   }
+}
 
+resource "aws_route_table_association" "private_assoc" {
+  count          = length(aws_subnet.private)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private_rt.id
+}
+# Security group
+# Security group for control plane
+resource "aws_security_group" "cluster_sg" {
+  name_prefix = "trendstore-cluster-"
+  vpc_id      = aws_vpc.eks_vpc.id
+
+  # EKS control plane needs egress to nodes & internet
   egress {
     from_port   = 0
     to_port     = 0
@@ -115,103 +115,165 @@ resource "aws_security_group" "jenkins_sg" {
   }
 
   tags = {
-    Name = "jenkins-sg"
+    Name = "trendstore-cluster-sg"
   }
 }
 
-# IAM role so EC2 can talk to EKS / CloudWatch / ECR etc.
-resource "aws_iam_role" "jenkins_role" {
-  name = "jenkins-ec2-role"
+# Security group for worker nodes
+resource "aws_security_group" "node_sg" {
+  name_prefix = "trendstore-node-"
+  vpc_id      = aws_vpc.eks_vpc.id
+
+  # Allow all traffic within VPC (nodes <-> nodes, nodes <-> cluster ENIs)
+  ingress {
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Outbound to internet / EKS / ECR
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "trendstore-node-sg"
+  }
+}
+
+# Allow nodes to call EKS API (control plane security group)
+resource "aws_security_group_rule" "cluster_ingress_from_nodes" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.node_sg.id
+  security_group_id        = aws_security_group.cluster_sg.id
+}
+
+
+# EKS Cluster
+resource "aws_eks_cluster" "eks" {
+  name     = var.cluster_name
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  vpc_config {
+    subnet_ids = concat(
+      aws_subnet.public[*].id,
+      aws_subnet.private[*].id
+    )
+
+    # Attach the cluster SG
+    security_group_ids      = [aws_security_group.cluster_sg.id]
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+}
+
+# resource "aws_eks_cluster" "eks" {
+# name     = var.cluster_name
+# role_arn = aws_iam_role.eks_cluster_role.arn
+# 
+# vpc_config {
+# subnet_ids = concat(
+# aws_subnet.public[*].id,
+# aws_subnet.private[*].id
+# )
+# }
+# 
+# depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+# }
+# node group
+resource "aws_eks_node_group" "nodes" {
+  cluster_name    = aws_eks_cluster.eks.name
+  node_group_name = "trendstore-nodes"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+
+  subnet_ids = aws_subnet.private[*].id
+
+  scaling_config {
+    desired_size = var.desired_nodes
+    min_size     = var.min_nodes
+    max_size     = var.max_nodes
+  }
+
+  instance_types = [var.node_instance_type]
+
+  depends_on = [
+    aws_iam_role_policy_attachment.worker_node_policies
+  ]
+}
+
+# resource "aws_eks_node_group" "nodes" {
+# cluster_name    = aws_eks_cluster.eks.name
+# node_group_name = "trendstore-nodes"
+# node_role_arn   = aws_iam_role.eks_node_role.arn
+# subnet_ids      = aws_subnet.private[*].id
+# 
+# scaling_config {
+# desired_size = var.desired_nodes
+# min_size     = var.min_nodes
+# max_size     = var.max_nodes
+# }
+# 
+# instance_types = [var.node_instance_type]
+# 
+# depends_on = [
+# aws_iam_role_policy_attachment.worker_node_policies
+# ]
+# }
+
+# iam roles
+# Custer roles
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "eksClusterRole"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
+      Effect    = "Allow"
+      Principal = { Service = "eks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
     }]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "jenkins_AmazonEKSClusterPolicy" {
-  role       = aws_iam_role.jenkins_role.name
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "jenkins_AmazonEKSWorkerNodePolicy" {
-  role       = aws_iam_role.jenkins_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+# worker node roles
+resource "aws_iam_role" "eks_node_role" {
+  name = "eksNodeRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
 }
 
-resource "aws_iam_role_policy_attachment" "jenkins_CloudWatchAgentServerPolicy" {
-  role       = aws_iam_role.jenkins_role.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+resource "aws_iam_role_policy_attachment" "worker_node_policies" {
+  for_each = toset([
+    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  ])
+
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = each.value
 }
-
-resource "aws_iam_instance_profile" "jenkins_profile" {
-  name = "jenkins-ec2-profile"
-  role = aws_iam_role.jenkins_role.name
-}
-
-# Jenkins EC2 instance
-resource "aws_instance" "jenkins" {
-  ami                         = data.aws_ami.amazon_linux_2.id
-  instance_type               = "t3.small"
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.jenkins_sg.id]
-  key_name                    = var.key_name
-  iam_instance_profile        = aws_iam_instance_profile.jenkins_profile.name
-  associate_public_ip_address = true
-
-  root_block_device {
-    volume_size = 30
-    volume_type = "gp3"
-  }
-
-  user_data = <<-EOF
-              #!/bin/bash
-              yum update -y
-              # Install Docker
-              amazon-linux-extras install docker -y
-              systemctl enable docker
-              systemctl start docker
-              usermod -aG docker ec2-user
-
-              # Install git and Java for Jenkins
-              yum install -y git java-11-amazon-corretto
-                
-              yum install -y curl gnupg software-properties-common
-
-              curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null && \
-              echo 'deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/' > /etc/apt/sources.list.d/jenkins.list
-                yum update
-
-            yum install -y openjdk-17-jdk jenkins
-          
-              # Install awscli v2 and kubectl
-              yum install -y unzip
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-              unzip /tmp/awscliv2.zip -d /tmp
-              /tmp/aws/install
-
-              curl -o /usr/local/bin/kubectl \
-                https://s3.us-west-2.amazonaws.com/amazon-eks/1.29.0/2024-03-11/bin/linux/amd64/kubectl
-              chmod +x /usr/local/bin/kubectl
-
-              EOF
-
-  tags = {
-    Name = "jenkins-ec2"
-  }
-}
-
-output "jenkins_public_ip" {
-  value = aws_instance.jenkins.public_ip
-}
-
-output "jenkins_url" {
-  value = "http://${aws_instance.jenkins.public_ip}:8080"
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
