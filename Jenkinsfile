@@ -40,19 +40,23 @@ pipeline {
             }
         }
         stage('Configure Kubeconfig for EKS') {
-           steps {
-             withCredentials([
-            aws(
-                credentialsId: 'aws-creds-id',
-                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-            )
-            ])
-            sh """
-              aws eks update-kubeconfig --name trendstore-eks --region us-east-2
-            """
-        }
+  steps {
+    withCredentials([
+      aws(
+        credentialsId: 'aws-creds-id',
+        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+      )
+    ]) {
+      sh '''
+        aws eks update-kubeconfig \
+          --name trendstore-eks \
+          --region us-east-2
+      '''
+    }
+  }
 }
+
 
         stage('Deploy Container') {
             steps {
