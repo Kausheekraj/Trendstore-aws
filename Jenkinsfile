@@ -44,24 +44,43 @@ pipeline {
                 sh "${SCRIPT_DIR}/compose.sh -d"
             }
         }
+        stage('Monitoring Setup') {
+           steps {
+        sh """
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+          helm repo update
+          helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace
+        """
+    }
+}
 
         stage('Health Check') {
             steps {
                 
                 sh """
-                 kubectl port-forward deployment/trendstore 3000:3000 >/tmp/pf.log 2>&1 &
-                  PF_PID=\$!
-
-                sleep 10
-                kubectl get pods 
-                kubectl get deploy
-                kubectl get svc
-                kubectl get hpa
-                curl -I http://localhost:3000 || true
-                kill \$PF_PID
+                 aws eks update-kubeconfig --name trendstore-eks --region us-east-2
+                  kubectl get nodes -o wide
+                  kubectl get pods -n default -l app=trendstore
+                  kubectl get hpa trendstore-hpa
+        
+                  kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/tmp/prom.log 2>&1 &
+                   sleep 5
+                   curl -s "http://localhost:9090/api/v1/query?query=up{job=~'kubelet|kube-state-metrics'}" | grep '"value"' && echo "✅ Prometheus healthy"
                 """
             }
         }
+        stage('Grafana dashboard') {
+          steps {
+            sh '''
+            kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80 &
+            sleep 5
+            curl -s "http://localhost:3000/d/6417/k8s-cluster?orgId=1&from=now-1h&to=now&var-ds_prometheus=Prometheus&var-cluster=&var-namespace=default&var-job=&var-pod=trendstore" > /dev/null
+            echo "✅ Grafana dashboard accessible at port-forward:3000/d/6417"
+            '''
+    }
+}
+
     }
 
     post {
