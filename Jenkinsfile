@@ -63,16 +63,17 @@ pipeline {
                   kubectl get pods -n default -l app=trendstore
                   kubectl get hpa trendstore-hpa
         
-                  kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 > ${WORKSPACE}/prom.log 2>&1 &
+                   kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
                    sleep 5
                    curl -s "http://localhost:9090/api/v1/query?query=up{job=~'kubelet|kube-state-metrics'}" | grep '"value"' && echo "✅ Prometheus healthy"
+
                 """
             }
         }
         stage('Grafana dashboard') {
           steps {
             sh '''
-          kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80 > ${WORKSPACE}/prom.log 2>&1 &
+          kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80 > /dev/null 2>&1 &
             sleep 5
             curl -s "http://localhost:3000/d/6417/k8s-cluster?orgId=1&from=now-1h&to=now&var-ds_prometheus=Prometheus&var-cluster=&var-namespace=default&var-job=&var-pod=trendstore" > /dev/null
             echo "✅ Grafana dashboard accessible at port-forward:3000/d/6417"
