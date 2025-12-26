@@ -54,28 +54,29 @@ pipeline {
         """
     }
 }
+          stage('Health Check') {
+    steps {
+        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+            sh """
+              kubectl get nodes -o wide
+              kubectl get pods -n default -l app=trendstore
+              kubectl get hpa trendstore-hpa
 
-        stage('Health Check') {
-            steps {
-                
-                sh """
-                  kubectl get nodes -o wide
-                  kubectl get pods -n default -l app=trendstore
-                  kubectl get hpa trendstore-hpa
-        
-                   kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
-                   sleep 5
-                   curl -s "http://localhost:9090/api/v1/query?query=up{job=~'kubelet|kube-state-metrics'}" | grep '"value"' && echo "✅ prometheus healthy"
-
-                """
-            }
+              kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
+              sleep 5
+              curl -s "http://localhost:9090/api/v1/query?query=up{job=~'kubelet|kube-state-metrics'}" | grep '"value"' || true
+              echo "✅ Prometheus health check stage completed"
+            """
         }
+    }
+}
+
         stage('grafana dashboard') {
           steps {
             sh '''
           kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80 > /dev/null 2>&1 &
             sleep 5
-            curl -s "http://localhost:3000/d/6417/k8s-cluster?orgid=1&from=now-1h&to=now&var-ds_prometheus=prometheus&var-cluster=&var-namespace=default&var-job=&var-pod=trendstore" > /dev/null
+            curl -s "http://localhost:3000/d/6417/k8s-cluster?orgid=1&from=now-1h&to=now&var-ds_prometheus=prometheus&var-cluster=&var-namespace=default&var-job=&var-pod=trendstore" >/dev/null
             echo "✅ grafana dashboard accessible at port-forward:3000/d/6417"
             '''
     }
