@@ -1,6 +1,7 @@
 FROM nginx:alpine AS trend 
 RUN rm -rf /usr/share/nginx/html/*
 COPY application/dist /usr/share/nginx/html
+COPY operation/Docker/nginx.conf /etc/nginx/nginx.conf
 EXPOSE 80
 
 

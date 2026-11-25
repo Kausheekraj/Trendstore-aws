@@ -38,13 +38,21 @@ pipeline {
         }
     }
 }
+  stage('Configure Kubeconfig for EKS') {
+            steps {
+                sh """
+                  aws eks update-kubeconfig --name trendstore-eks --region us-east-2
+                """
+            }
+        }
+
 
          stage('Deploy Container') {
             steps {
                 sh "${SCRIPT_DIR}/compose.sh -d"
             }
         }
-        stage('Monitoring Setup') {
+          stage('Monitoring Setup') {
            steps {
         sh """
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
@@ -81,6 +89,7 @@ pipeline {
             '''
     }
 }
+
 
     }
 

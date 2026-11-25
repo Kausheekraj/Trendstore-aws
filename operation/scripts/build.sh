@@ -19,6 +19,7 @@ case "$mode" in
   build)
     echo "building new app image"
     docker compose build --no-cache
+    minikube image load "$base_image":latest
     ;;
   push)
     echo "pushing image"
